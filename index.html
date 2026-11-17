@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://localhost:9100 http://127.0.0.1:9100 https://localhost:9101 https://127.0.0.1:9101; img-src 'self' data:">
+  <title>Inventario · Prueba de impresión Zebra</title>
+  <script src="./BrowserPrint.min.js" defer></script>
+  <style>
+    :root{font-family:Segoe UI,Arial,sans-serif;color:#17212e;background:#f1f5f9}
+    *{box-sizing:border-box}body{margin:0;padding:24px} main{max-width:850px;margin:auto}
+    header{margin:0 0 18px} h1{margin:0;font-size:26px;letter-spacing:-.5px}p{line-height:1.5}
+    .muted{color:#526173}.panel{background:#fff;border:1px solid #dce3ea;border-radius:14px;padding:22px;margin:15px 0;box-shadow:0 3px 14px #0c23450a}
+    .pill{display:inline-block;background:#e9f0ff;color:#2858a8;padding:5px 10px;border-radius:99px;font-size:12px;font-weight:bold;margin-bottom:12px}
+    label{font-weight:650;display:block;margin-top:14px;margin-bottom:5px}input{width:100%;padding:12px;border:1px solid #b8c5d5;border-radius:9px;font-size:16px}
+    .two{display:grid;grid-template-columns:2fr 1fr;gap:16px}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px}
+    button{background:#1254aa;color:#fff;border:0;padding:12px 20px;border-radius:9px;font-size:15px;font-weight:650;cursor:pointer}
+    button.alt{background:#eaf1fa;color:#194779}button:disabled{background:#b5bec8;cursor:not-allowed}
+    #estado{padding:12px;border-radius:9px;background:#eef4ff;color:#24466d;margin-top:12px;min-height:46px}
+    #estado.ok{background:#e8f7ed;color:#166534}#estado.err{background:#fff0f0;color:#a61b29}
+    .etiqueta{aspect-ratio:2/1;width:min(100%,560px);border-radius:10px;border:1px solid #c6c6c6;background:#fff;display:flex;align-items:center;justify-content:center;flex-direction:column;margin:auto;padding:18px;box-shadow:0 2px 4px #ddd}
+    .etiqueta .nombre{font-weight:750;font-size:clamp(16px,3vw,25px);text-align:center;max-width:95%;overflow-wrap:anywhere}
+    .etiqueta .barras{width:53%;height:92px;background:repeating-linear-gradient(90deg,#111 0px,#111 3px,#fff 3px,#fff 6px,#111 6px,#111 7px,#fff 7px,#fff 10px);margin:16px 0 8px}
+    .etiqueta .id{font-size:clamp(20px,3vw,27px);font-weight:750;letter-spacing:1px}
+    details{margin-top:16px}pre{background:#f1f5f9;border-radius:8px;overflow:auto;padding:12px;font-size:12px}
+    .small{font-size:13px} @media(max-width:620px){body{padding:13px}.two{grid-template-columns:1fr}.panel{padding:16px}}
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <span class="pill">Prototipo de demostración · Sin conexión a SharePoint</span>
+    <h1>Imprimir etiqueta · Zebra ZD421</h1>
+    <p class="muted">Etapa 1: prueba con datos ficticios. No ingreses ni publiques datos corporativos. La impresora Zebra debe estar conectada y Browser Print activo.</p>
+  </header>
+  <section class="panel">
+    <strong>Conexión con Browser Print</strong>
+    <div id="estado" role="status" aria-live="polite">Comprobando biblioteca de Zebra…</div>
+    <div class="actions"><button class="alt" type="button" id="conectar">Buscar Zebra predeterminada</button></div>
+    <p class="muted small">Si Browser Print solicita autorización, verifica que el dominio sea el de TU sitio de GitHub Pages. No autorices sitios desconocidos.</p>
+  </section>
+  <section class="panel">
+    <div class="two">
+      <div><label for="nombre">Nombre del producto</label><input id="nombre" value="PRODUCTO DE PRUEBA" maxlength="65" autocomplete="off"></div>
+      <div><label for="idProducto">ID del producto (numérico)</label><input id="idProducto" value="1234567" inputmode="numeric" maxlength="20" autocomplete="off"></div>
+    </div>
+    <p class="muted small">En esta prueba los datos se ingresan manualmente; todavía no se leen desde Excel Online.</p>
+    <div class="actions">
+      <button id="imprimir" type="button" disabled>Imprimir 1 etiqueta</button>
+      <button id="verCodigo" class="alt" type="button">Actualizar vista previa y ZPL</button>
+    </div>
+  </section>
+  <section class="panel">
+    <h2 style="font-size:18px;margin-top:0">Vista de referencia · 100 × 50 mm</h2>
+    <div class="etiqueta" aria-label="Vista esquemática de la etiqueta">
+      <div id="prevNombre" class="nombre"></div>
+      <div class="barras" aria-hidden="true"></div>
+      <div id="prevId" class="id"></div>
+    </div>
+    <p class="muted small">Las barras de esta vista previa son ilustrativas; el código de barras real Code 128 lo genera la Zebra mediante ZPL.</p>
+    <details><summary>Ver el código ZPL que se enviará (para aprender y diagnosticar)</summary><pre id="zpl"></pre></details>
+  </section>
+</main>
+<script>
+  'use strict';
+  const $ = id => document.getElementById(id);
+  let impresora = null;
+  const estado = (mensaje, tipo = '') => { $('estado').textContent = mensaje; $('estado').className = tipo; };
+  function limpiarNombre(texto) {
+    return String(texto).normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+      .toUpperCase().replace(/[^A-Z0-9 .,_()\/-]/g,' ').replace(/\s+/g,' ').trim().slice(0,65);
+  }
+  function datosValidos() {
+    const nombre = limpiarNombre($('nombre').value);
+    const id = $('idProducto').value.trim();
+    if (!nombre) throw new Error('Escribe el nombre del producto.');
+    if (!/^\d{1,20}$/.test(id)) throw new Error('El ID debe tener entre 1 y 20 dígitos.');
+    return {nombre,id};
+  }
+  function generarZPL({nombre,id}) {
+    // Medidas Zebra ZD421 203 dpi: 100 mm ~ 800 puntos; 50 mm ~ 400 puntos.
+    // Posición conservadora para códigos de diferente longitud.
+    // Centrar precisamente todas las longitudes requerirá afinar el ancho del Code 128.
+    const ancho = id.length > 12 ? 2 : 3;
+    const x = id.length > 12 ? 180 : 232;
+    return [
+      '^XA','^CI28','^PW800','^LL400','^LH0',
+      '^FO30,35','^A0N,38,32','^FB740,2,0,C,0',`^FD${nombre}^FS`,
+      `^BY${ancho},2,145`,`^FO${x},120`,'^BCN,145,N,N,N',`^FD${id}^FS`,
+      '^FO90,300','^A0N,38,32','^FB620,1,0,C,0',`^FD${id}^FS`,
+      '^PQ1','^XZ'
+    ].join('\n');
+  }
+  function actualizar() {
+    try {
+      const datos = datosValidos();
+      $('prevNombre').textContent = datos.nombre;
+      $('prevId').textContent = datos.id;
+      $('zpl').textContent = generarZPL(datos);
+      return true;
+    } catch(err) {
+      $('prevNombre').textContent = 'DATOS INCOMPLETOS';
+      $('prevId').textContent = '---';
+      $('zpl').textContent = String(err.message || err);
+      return false;
+    }
+  }
+  function conectar() {
+    $('imprimir').disabled = true;
+    impresora = null;
+    if (typeof BrowserPrint === 'undefined') {
+      estado('Falta BrowserPrint.min.js. Agrega la biblioteca oficial de Zebra al repositorio, junto a index.html, y recarga la página.', 'err');
+      return;
+    }
+    estado('Buscando impresora predeterminada…');
+    BrowserPrint.getDefaultDevice('printer', device => {
+      if (!device) { estado('Browser Print responde, pero no hay impresora predeterminada. Configura la ZD421 en Browser Print Settings.', 'err'); return; }
+      impresora = device;
+      $('imprimir').disabled = false;
+      estado(`Conectada: ${device.name || 'Impresora Zebra predeterminada'}. Lista para solicitar una impresión.`, 'ok');
+    }, err => estado('No fue posible conectar con Browser Print: ' + String(err), 'err'));
+  }
+  $('conectar').addEventListener('click', conectar);
+  $('verCodigo').addEventListener('click', () => {
+    if (actualizar()) estado('Vista previa y ZPL actualizados. No se ha enviado ninguna impresión.', 'ok');
+    else estado('Corrige los datos antes de imprimir.', 'err');
+  });
+  ['nombre','idProducto'].forEach(id => $(id).addEventListener('input', actualizar));
+  $('imprimir').addEventListener('click', () => {
+    if (!impresora) { estado('Primero conecta con Browser Print.', 'err'); return; }
+    let zpl;
+    try { zpl = generarZPL(datosValidos()); } catch(err) { estado(String(err.message || err), 'err'); return; }
+    $('imprimir').disabled = true;
+    estado('Enviando 1 etiqueta a la Zebra…');
+    impresora.send(zpl, () => {
+      estado('Orden enviada correctamente. Comprueba que la etiqueta salió y se puede escanear.', 'ok');
+      $('imprimir').disabled = false;
+    }, err => {
+      estado('Error al enviar a la Zebra: ' + String(err), 'err');
+      $('imprimir').disabled = false;
+    });
+  });
+  actualizar();
+  window.addEventListener('load', conectar);
+</script>
+</body>
+</html>
